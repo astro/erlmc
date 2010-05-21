@@ -33,8 +33,10 @@
 -export([start_link/1, init/1, handle_call/3, handle_cast/2, 
 	     handle_info/2, terminate/2, code_change/3]).
 
+-define(TREE, gb_trees).
 -record(state, {socket,
-		requesters = queue:new()}).
+		requesters = ?TREE:empty(),
+		next_opaque = 1}).
 
 %% API functions
 start_link([Host, Port]) ->
@@ -75,9 +77,12 @@ init([Host, Port]) ->
 %% Description: Handling call messages
 %% @hidden
 %%--------------------------------------------------------------------    
-handle_call({req, Req}, From, #state{socket = Socket} = State) ->
-    send(Socket, Req),
-    {noreply, State#state{requesters = queue:in(From, State#state.requesters)}}.
+handle_call({req, Req}, From, #state{socket = Socket,
+				     next_opaque = Opaque} = State) ->
+    send(Socket, Req#request{opaque = Opaque}),
+    NextOpaque = (Opaque + 1) rem 16#100000000,  % Opaque is 32 bit
+    {noreply, State#state{requesters = ?TREE:insert(Opaque, From, State#state.requesters),
+			  next_opaque = NextOpaque}}.
     
 %%--------------------------------------------------------------------
 %% Function: handle_cast(Msg, State) -> {noreply, State} |
@@ -86,10 +91,16 @@ handle_call({req, Req}, From, #state{socket = Socket} = State) ->
 %% Description: Handling cast messages
 %% @hidden
 %%--------------------------------------------------------------------
-handle_cast({reply, Reply}, #state{requesters = Requesters1} = State) ->
-    {{value, From}, Requesters2} = queue:out(Requesters1),
-    gen_server:reply(From, {reply, Reply}),
-    {noreply, State#state{requesters = Requesters2}}.
+handle_cast({reply, #response{opaque = Opaque} = Reply},
+	    #state{requesters = Requesters1} = State) ->
+    case ?TREE:lookup(Requesters1) of
+	{value, From} ->
+	    gen_server:reply(From, {reply, Reply}),
+	    Requesters2 = ?TREE:delete(Opaque, Requesters1),
+	    {noreply, State#state{requesters = Requesters2}};
+	_ ->
+	    {noreply, State}
+    end.
 
 %%--------------------------------------------------------------------
 %% Function: handle_info(Info, State) -> {noreply, State} |
