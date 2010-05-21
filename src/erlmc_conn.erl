@@ -93,7 +93,7 @@ handle_call({req, Req}, From, #state{socket = Socket,
 %%--------------------------------------------------------------------
 handle_cast({reply, #response{opaque = Opaque} = Reply},
 	    #state{requesters = Requesters1} = State) ->
-    case ?TREE:lookup(Requesters1) of
+    case ?TREE:lookup(Opaque, Requesters1) of
 	{value, From} ->
 	    gen_server:reply(From, {reply, Reply}),
 	    Requesters2 = ?TREE:delete(Opaque, Requesters1),
